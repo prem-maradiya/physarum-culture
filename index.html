@@ -1,0 +1,853 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Physarum Culture</title>
+<meta name="description" content="A live GPU simulation of a million slime-mould agents growing transport networks in the browser.">
+<meta name="theme-color" content="#0A0C0B">
+<meta property="og:title" content="Physarum Culture">
+<meta property="og:description" content="A million slime-mould agents, simulated on your GPU, growing real transport networks. Drag to place food.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>%F0%9F%A7%AB</text></svg>">
+<style>
+  :root{
+    /* Single committed world: a lit specimen field viewed in a dark room.
+       Every colour is painted explicitly so the page holds on any host ground. */
+    --ground:#0A0C0B;
+    --panel:#12160F;
+    --panel-2:#171C15;
+    --rule:#252E26;
+    --rule-soft:#1B221C;
+    --ink:#D9E0D3;
+    --ink-dim:#828F80;
+    --ink-faint:#5C665B;
+    --accent:#E8B33B;
+    --accent-dim:#8A6A20;
+    --accent-glow:rgba(232,179,59,.16);
+
+    --f-label:Bahnschrift,"DIN Alternate","Avenir Next Condensed","Franklin Gothic Medium","Roboto Condensed",sans-serif;
+    --f-note:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+    --f-data:Consolas,"SF Mono","Cascadia Mono","Roboto Mono",ui-monospace,monospace;
+
+    --rail:308px;
+  }
+
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;
+    background:var(--ground);
+    color:var(--ink);
+    font-family:var(--f-label);
+    overflow:hidden;
+    -webkit-font-smoothing:antialiased;
+  }
+
+  /* ── specimen field ───────────────────────────────────────────── */
+  #field{position:fixed;inset:0;width:100%;height:100%;display:block;background:var(--ground);touch-action:none;cursor:crosshair}
+  #fallback{
+    position:fixed;inset:0;display:none;place-content:center;padding:2rem;
+    font-family:var(--f-note);font-size:1.05rem;line-height:1.6;color:var(--ink-dim);text-align:center;
+  }
+  #fallback b{display:block;font-family:var(--f-label);letter-spacing:.14em;text-transform:uppercase;
+    font-size:.72rem;color:var(--accent);margin-bottom:.9rem}
+
+  /* ── masthead ─────────────────────────────────────────────────── */
+  .masthead{
+    position:fixed;top:0;left:0;padding:22px 26px;z-index:3;pointer-events:none;
+    transition:opacity .35s ease, transform .35s ease;
+  }
+  /* the field beneath can go white-hot, so the titling carries its own shade */
+  .masthead::before,.hint::before{
+    content:"";position:absolute;z-index:-1;
+    left:-28%;top:-120%;width:168%;height:330%;
+    background:radial-gradient(ellipse at 34% 60%,
+      rgba(5,7,6,.95) 0%, rgba(5,7,6,.74) 30%, rgba(5,7,6,.24) 52%, rgba(5,7,6,0) 70%);
+  }
+  .eyebrow{
+    font-size:.635rem;letter-spacing:.30em;text-transform:uppercase;color:var(--accent);
+    display:flex;align-items:center;gap:.6em;
+  }
+  .eyebrow::after{content:"";width:46px;height:1px;background:linear-gradient(90deg,var(--accent-dim),transparent)}
+  h1{
+    margin:.34em 0 .1em;font-size:clamp(1.5rem,3.4vw,2.15rem);font-weight:600;
+    letter-spacing:.005em;line-height:1;text-wrap:balance;
+    text-shadow:0 2px 26px rgba(0,0,0,.85);
+  }
+  .binomial{font-family:var(--f-note);font-style:italic;font-size:.86rem;color:var(--ink-dim);letter-spacing:.01em}
+
+  /* ── instrument rail ──────────────────────────────────────────── */
+  .rail{
+    position:fixed;top:0;right:0;bottom:0;width:var(--rail);z-index:4;
+    background:linear-gradient(180deg,rgba(18,22,15,.93),rgba(10,12,11,.95));
+    border-left:1px solid var(--rule);
+    backdrop-filter:blur(14px) saturate(.9);
+    -webkit-backdrop-filter:blur(14px) saturate(.9);
+    display:flex;flex-direction:column;
+    transition:transform .38s cubic-bezier(.4,0,.2,1);
+  }
+  .rail[data-open="false"]{transform:translateX(100%)}
+  .rail-scroll{overflow-y:auto;overflow-x:hidden;flex:1;padding:20px 20px 8px;scrollbar-width:thin;
+    scrollbar-color:var(--rule) transparent}
+  .rail-scroll::-webkit-scrollbar{width:8px}
+  .rail-scroll::-webkit-scrollbar-thumb{background:var(--rule);border-radius:4px}
+
+  .group{display:flex;flex-direction:column;gap:11px;padding-bottom:20px;margin-bottom:18px;border-bottom:1px solid var(--rule-soft)}
+  .group:last-child{border-bottom:0}
+  .group-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:2px}
+  .group-title{font-size:.63rem;letter-spacing:.26em;text-transform:uppercase;color:var(--ink-faint)}
+  .group-note{font-family:var(--f-note);font-size:.74rem;font-style:italic;color:var(--ink-faint)}
+
+  /* chips */
+  .chips{display:flex;flex-wrap:wrap;gap:6px}
+  .chip{
+    font-family:var(--f-label);font-size:.7rem;letter-spacing:.09em;text-transform:uppercase;
+    padding:6px 11px;border:1px solid var(--rule);border-radius:2px;
+    background:transparent;color:var(--ink-dim);cursor:pointer;
+    transition:color .16s,border-color .16s,background .16s;
+  }
+  .chip:hover{color:var(--ink);border-color:var(--accent-dim)}
+  .chip[aria-pressed="true"]{color:var(--ground);background:var(--accent);border-color:var(--accent);font-weight:600}
+
+  .swatches{display:flex;gap:7px}
+  .sw{width:100%;height:26px;border:1px solid var(--rule);border-radius:2px;cursor:pointer;padding:0;
+    position:relative;transition:transform .16s,border-color .16s}
+  .sw:hover{transform:translateY(-2px);border-color:var(--accent-dim)}
+  .sw[aria-pressed="true"]{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+
+  /* sliders */
+  .ctl{display:flex;flex-direction:column;gap:5px}
+  .ctl-top{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+  .ctl-name{font-size:.735rem;letter-spacing:.055em;color:var(--ink)}
+  .ctl-val{font-family:var(--f-data);font-size:.72rem;font-variant-numeric:tabular-nums;color:var(--accent);letter-spacing:.02em}
+  input[type=range]{
+    -webkit-appearance:none;appearance:none;width:100%;height:16px;background:transparent;cursor:ew-resize;margin:0;
+  }
+  input[type=range]::-webkit-slider-runnable-track{height:2px;background:var(--rule);border-radius:1px}
+  input[type=range]::-moz-range-track{height:2px;background:var(--rule);border-radius:1px}
+  input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none;width:11px;height:11px;margin-top:-4.5px;border-radius:50%;
+    background:var(--accent);border:0;box-shadow:0 0 0 4px var(--accent-glow);transition:box-shadow .16s
+  }
+  input[type=range]::-moz-range-thumb{width:11px;height:11px;border-radius:50%;background:var(--accent);border:0;
+    box-shadow:0 0 0 4px var(--accent-glow)}
+  input[type=range]:hover::-webkit-slider-thumb{box-shadow:0 0 0 7px var(--accent-glow)}
+
+  /* buttons */
+  .btn-row{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  .btn{
+    font-family:var(--f-label);font-size:.72rem;letter-spacing:.13em;text-transform:uppercase;
+    padding:9px 8px;border:1px solid var(--rule);border-radius:2px;background:var(--panel-2);color:var(--ink);
+    cursor:pointer;transition:border-color .16s,color .16s,background .16s;
+  }
+  .btn:hover{border-color:var(--accent-dim);color:var(--accent)}
+  .btn.primary{background:var(--accent);color:var(--ground);border-color:var(--accent);font-weight:600}
+  .btn.primary:hover{filter:brightness(1.12);color:var(--ground)}
+
+  /* readouts */
+  .readout{
+    border-top:1px solid var(--rule);padding:12px 20px 16px;display:grid;grid-template-columns:repeat(3,1fr);gap:10px;
+  }
+  .stat{display:flex;flex-direction:column;gap:2px}
+  .stat dt{font-size:.575rem;letter-spacing:.2em;text-transform:uppercase;color:var(--ink-faint)}
+  .stat dd{margin:0;font-family:var(--f-data);font-size:.9rem;font-variant-numeric:tabular-nums;color:var(--ink)}
+  .stat dd .u{font-size:.66rem;color:var(--ink-faint);margin-left:.2em}
+
+  /* about */
+  details.note{margin-top:2px}
+  details.note summary{
+    font-size:.63rem;letter-spacing:.26em;text-transform:uppercase;color:var(--ink-faint);
+    cursor:pointer;list-style:none;padding:2px 0;transition:color .16s;
+  }
+  details.note summary:hover{color:var(--accent)}
+  details.note summary::-webkit-details-marker{display:none}
+  details.note summary::after{content:" +";color:var(--accent-dim)}
+  details.note[open] summary::after{content:" −"}
+  details.note p{
+    font-family:var(--f-note);font-size:.815rem;line-height:1.62;color:var(--ink-dim);
+    margin:10px 0 0;max-width:60ch;
+  }
+  details.note em{color:var(--ink)}
+
+  /* rail toggle handle */
+  .handle{
+    position:fixed;top:20px;right:20px;z-index:5;
+    width:40px;height:40px;border:1px solid var(--rule);border-radius:2px;
+    background:rgba(18,22,15,.86);backdrop-filter:blur(10px);color:var(--ink);
+    display:grid;place-content:center;cursor:pointer;transition:border-color .16s,color .16s,opacity .3s;
+  }
+  .handle:hover{border-color:var(--accent);color:var(--accent)}
+  .handle svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.5}
+  .rail[data-open="true"] ~ .handle{opacity:0;pointer-events:none}
+
+  .hint{
+    position:fixed;left:26px;bottom:22px;z-index:3;pointer-events:none;
+    font-size:.635rem;letter-spacing:.2em;text-transform:uppercase;color:var(--ink-dim);
+    transition:opacity .35s ease;
+  }
+  .hint b{color:var(--accent);font-weight:400}
+
+  body[data-chrome="off"] .masthead,
+  body[data-chrome="off"] .hint{opacity:0}
+  body[data-chrome="off"] .handle{opacity:.12}
+
+  :focus-visible{outline:1px solid var(--accent);outline-offset:3px}
+
+  @media (max-width:820px){
+    :root{--rail:100%}
+    .rail{top:auto;left:0;height:66svh;border-left:0;border-top:1px solid var(--rule)}
+    .rail[data-open="false"]{transform:translateY(100%)}
+    .rail-scroll{padding:16px 18px 4px}
+    .masthead{padding:16px 18px}
+    .hint{display:none}
+    .handle{top:auto;bottom:18px;right:18px}
+  }
+  @media (prefers-reduced-motion:reduce){
+    *{transition-duration:.01ms !important}
+  }
+</style>
+</head>
+<body>
+
+<canvas id="field" aria-label="Live simulation of slime mould agents forming a transport network"></canvas>
+
+<div id="fallback" role="alert">
+  <div>
+    <b>No WebGL2 on this display</b>
+    This culture runs on the graphics card — it needs WebGL2, which this browser
+    isn’t providing. Try a desktop browser, or re-enable hardware acceleration.
+  </div>
+</div>
+
+<header class="masthead">
+  <div class="eyebrow">Specimen 01 · Live culture</div>
+  <h1>Physarum Culture</h1>
+  <div class="binomial">Physarum polycephalum — one cell, many heads</div>
+</header>
+
+<div class="hint"><b>Drag</b> the field to place food · <b>H</b> hides the panel</div>
+
+<aside class="rail" id="rail" data-open="true" aria-label="Culture controls">
+  <div class="rail-scroll">
+
+    <section class="group">
+      <div class="group-head">
+        <span class="group-title">Field</span>
+        <span class="group-note">how the colony starts</span>
+      </div>
+      <div class="chips" id="seeds" role="group" aria-label="Inoculation pattern"></div>
+      <div class="btn-row">
+        <button class="btn primary" id="playBtn">Pause</button>
+        <button class="btn" id="resetBtn">Re-inoculate</button>
+      </div>
+    </section>
+
+    <section class="group">
+      <div class="group-head">
+        <span class="group-title">Behaviour</span>
+        <span class="group-note">the three-sensor rule</span>
+      </div>
+      <div class="chips" id="presets" role="group" aria-label="Behaviour presets"></div>
+      <div id="behaviour"></div>
+    </section>
+
+    <section class="group">
+      <div class="group-head">
+        <span class="group-title">Medium</span>
+        <span class="group-note">how the trail fades</span>
+      </div>
+      <div id="medium"></div>
+    </section>
+
+    <section class="group">
+      <div class="group-head">
+        <span class="group-title">Render</span>
+        <span class="group-note">stain &amp; population</span>
+      </div>
+      <div class="swatches" id="palettes" role="group" aria-label="Stain"></div>
+      <div id="render"></div>
+    </section>
+
+    <section class="group">
+      <details class="note">
+        <summary>About the organism</summary>
+        <p><em>Physarum polycephalum</em> is a single cell with no brain and no neurons, yet it
+        finds the shortest path through a maze and — given oat flakes laid out as Japanese
+        cities — grows a network close to the Tokyo rail map.</p>
+        <p>Each agent here follows Jeff Jones’ 2010 model: sample the chemical trail at three
+        points ahead, turn toward the strongest, step forward, and deposit a little trail of
+        your own. That single rule, run a million times a frame, is the whole colony. Nothing
+        below is drawn — every vein you see is agents agreeing with each other.</p>
+      </details>
+    </section>
+
+  </div>
+
+  <dl class="readout">
+    <div class="stat"><dt>Agents</dt><dd id="rAgents">—</dd></div>
+    <div class="stat"><dt>Rate</dt><dd id="rFps">—<span class="u">fps</span></dd></div>
+    <div class="stat"><dt>Steps</dt><dd id="rSteps">—</dd></div>
+  </dl>
+</aside>
+
+<button class="handle" id="handle" aria-label="Show controls">
+  <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+</button>
+
+<script>
+(() => {
+"use strict";
+
+// Without this a phone lays the page out at 980px and scales it down, so the
+// bottom-sheet breakpoint never fires.
+if (!document.querySelector('meta[name="viewport"]')){
+  const m = document.createElement("meta");
+  m.name = "viewport";
+  m.content = "width=device-width, initial-scale=1, viewport-fit=cover";
+  document.head.appendChild(m);
+}
+
+const canvas = document.getElementById("field");
+const gl = canvas.getContext("webgl2", { antialias:false, alpha:false, depth:false,
+  preserveDrawingBuffer:false, powerPreference:"high-performance" });
+
+if (!gl) {
+  canvas.style.display = "none";
+  document.getElementById("fallback").style.display = "grid";
+  document.getElementById("rail").style.display = "none";
+  document.getElementById("handle").style.display = "none";
+  return;
+}
+
+/* ── parameters ─────────────────────────────────────────────────── */
+const P = {
+  sensorAngle: 22,   // degrees off-heading for the flanking sensors
+  sensorDist : 9,    // px ahead
+  turn       : 28,   // degrees per step
+  speed      : 1.0,  // px per step
+  wander     : 0.12, // radians of noise
+  deposit    : 0.14, // target mean trail level — normalised against population & persistence
+  evaporate  : 0.965,
+  diffuse    : 0.62,
+  population : 400000,
+  steps      : 1,
+  gamma      : 0.82,
+};
+
+const SEEDS = ["Scatter","Ring","Point","Grid"];
+let seedMode = "Scatter";
+
+const PRESETS = {
+  "Veins"     : { sensorAngle:22, sensorDist:9,  turn:28, speed:1.0, wander:0.12, deposit:0.14, evaporate:0.965, diffuse:0.62 },
+  "Lattice"   : { sensorAngle:45, sensorDist:20, turn:45, speed:1.2, wander:0.05, deposit:0.17, evaporate:0.955, diffuse:0.45 },
+  "Nebula"    : { sensorAngle:14, sensorDist:26, turn:12, speed:1.6, wander:0.30, deposit:0.10, evaporate:0.985, diffuse:0.92 },
+  "Dendrite"  : { sensorAngle:34, sensorDist:5,  turn:60, speed:0.5, wander:0.04, deposit:0.22, evaporate:0.930, diffuse:0.30 },
+  "Frenzy"    : { sensorAngle:60, sensorDist:14, turn:80, speed:2.6, wander:0.45, deposit:0.12, evaporate:0.950, diffuse:0.70 },
+  "Silk"      : { sensorAngle:10, sensorDist:16, turn:8,  speed:0.8, wander:0.02, deposit:0.13, evaporate:0.978, diffuse:0.55 },
+};
+let presetName = "Veins";
+
+const PALETTES = {
+  "Culture"    : ["#070906","#2A1B06","#8A5A0E","#E8B33B","#FFF3D0"],
+  "Mycelium"   : ["#03090B","#06282E","#12787E","#58D6C0","#EAFFF6"],
+  "Ferrofluid" : ["#050505","#1C1E22","#5A6069","#B9BFC6","#FFFFFF"],
+  "Ultraviolet": ["#06040E","#1E0A3C","#6A1E8F","#D64BC0","#FFE3F4"],
+  "Ember"      : ["#0A0403","#3A0C05","#A32C08","#F07319","#FFE6A8"],
+};
+let paletteName = "Culture";
+
+const hex2rgb = h => [parseInt(h.slice(1,3),16)/255, parseInt(h.slice(3,5),16)/255, parseInt(h.slice(5,7),16)/255];
+let palCur = PALETTES[paletteName].map(hex2rgb);
+let palTgt = palCur.map(c => c.slice());
+
+/* ── shader plumbing ────────────────────────────────────────────── */
+function compile(type, src){
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s) + "\n" + src);
+  return s;
+}
+function program(vs, fs, tfVaryings){
+  const p = gl.createProgram();
+  gl.attachShader(p, compile(gl.VERTEX_SHADER, vs));
+  gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fs));
+  if (tfVaryings) gl.transformFeedbackVaryings(p, tfVaryings, gl.SEPARATE_ATTRIBS);
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+  const u = {};
+  const n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
+  for (let i=0;i<n;i++){ const info = gl.getActiveUniform(p,i); u[info.name.replace("[0]","")] = gl.getUniformLocation(p, info.name); }
+  return { p, u };
+}
+
+const HASH = `
+float hash13(vec3 p){
+  p = fract(p * 0.1031);
+  p += dot(p, p.zyx + 31.32);
+  return fract((p.x + p.y) * p.z);
+}`;
+
+/* Agent pass: one draw call that both advances every agent (captured by
+   transform feedback) and rasterises its deposit into the trail. */
+const AGENT_VS = `#version 300 es
+precision highp float;
+layout(location=0) in vec4 a_state;      // x, y, heading, seed
+uniform sampler2D u_trail;
+uniform vec2  u_res;
+uniform float u_sensorAngle, u_sensorDist, u_turn, u_speed, u_wander, u_frame;
+out vec4 v_state;
+${HASH}
+float sense(vec2 pos, float a){
+  vec2 p = pos + vec2(cos(a), sin(a)) * u_sensorDist;
+  return texture(u_trail, p / u_res).r;
+}
+void main(){
+  vec2  pos = a_state.xy;
+  float ang = a_state.z;
+  float sd  = a_state.w;
+  float rnd = hash13(vec3(pos * 0.37, u_frame + sd));
+
+  float f = sense(pos, ang);
+  float l = sense(pos, ang + u_sensorAngle);
+  float r = sense(pos, ang - u_sensorAngle);
+
+  if (f < l && f < r)        ang += (rnd < 0.5 ? -u_turn : u_turn);
+  else if (l > r)            ang += u_turn;
+  else if (r > l)            ang -= u_turn;
+
+  ang += (rnd - 0.5) * u_wander;
+  vec2 np = mod(pos + vec2(cos(ang), sin(ang)) * u_speed, u_res);
+
+  v_state = vec4(np, ang, sd);
+  gl_Position  = vec4((np / u_res) * 2.0 - 1.0, 0.0, 1.0);
+  gl_PointSize = 1.0;
+}`;
+
+const AGENT_FS = `#version 300 es
+precision highp float;
+uniform float u_deposit;
+out vec4 outColor;
+void main(){ outColor = vec4(u_deposit); }`;
+
+const QUAD_VS = `#version 300 es
+void main(){
+  vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
+  gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+}`;
+
+/* Diffuse + evaporate: a 3×3 box blur mixed against the centre, then decayed. */
+const BLUR_FS = `#version 300 es
+precision highp float;
+uniform sampler2D u_trail;
+uniform vec2  u_res;
+uniform float u_diffuse, u_evaporate;
+out vec4 outColor;
+void main(){
+  vec2 uv = gl_FragCoord.xy / u_res;
+  vec2 t  = 1.0 / u_res;
+  // Four half-texel-offset samples ride the bilinear unit to give a weighted
+  // 3x3 kernel for the price of four fetches instead of nine.
+  float sum = texture(u_trail, uv + vec2( 0.5,  0.5) * t).r
+            + texture(u_trail, uv + vec2(-0.5,  0.5) * t).r
+            + texture(u_trail, uv + vec2( 0.5, -0.5) * t).r
+            + texture(u_trail, uv + vec2(-0.5, -0.5) * t).r;
+  float centre = texture(u_trail, uv).r;
+  float v = mix(centre, sum * 0.25, u_diffuse) * u_evaporate;
+  outColor = vec4(max(v - 0.00035, 0.0));
+}`;
+
+const SHOW_FS = `#version 300 es
+precision highp float;
+uniform sampler2D u_trail;
+uniform vec2  u_res;
+uniform vec3  u_pal[5];
+uniform float u_gamma, u_mean;
+out vec4 outColor;
+/* Four wide diagonal taps: enough of a halo that a thick vein reads as lit. */
+float halo(vec2 uv, vec2 t){
+  return 0.25 * (texture(u_trail, uv + vec2( 4.5,  4.5)*t).r
+               + texture(u_trail, uv + vec2(-4.5,  4.5)*t).r
+               + texture(u_trail, uv + vec2( 4.5, -4.5)*t).r
+               + texture(u_trail, uv + vec2(-4.5, -4.5)*t).r);
+}
+vec3 ramp(float t){
+  t = clamp(t, 0.0, 1.0) * 4.0;
+  int i = int(floor(t));
+  float f = smoothstep(0.0, 1.0, fract(t));
+  if (i >= 4) return u_pal[4];
+  if (i == 3) return mix(u_pal[3], u_pal[4], f);
+  if (i == 2) return mix(u_pal[2], u_pal[3], f);
+  if (i == 1) return mix(u_pal[1], u_pal[2], f);
+  return mix(u_pal[0], u_pal[1], f);
+}
+void main(){
+  vec2 uv = gl_FragCoord.xy / u_res;
+  vec2 t  = 1.0 / u_res;
+  // Exposure is tied to the field's known mean, so the stain reads the same
+  // whether there are 50k agents or two million.
+  float v = texture(u_trail, uv).r / max(u_mean, 1e-4) * 0.55;
+  vec3 col = ramp(pow(clamp(v, 0.0, 1.0), u_gamma));
+  float g  = halo(uv, t) / max(u_mean, 1e-4) * 0.55;
+  col += u_pal[4] * pow(clamp(g, 0.0, 1.0), 2.3) * 0.30;
+  float d = length(uv - 0.5) * 1.32;
+  col *= 1.0 - 0.34 * pow(clamp(d, 0.0, 1.0), 2.4);
+  outColor = vec4(col, 1.0);
+}`;
+
+/* A soft additive disc — the oat flake you drop on the dish. */
+const FOOD_VS = `#version 300 es
+uniform vec2 u_pos; uniform vec2 u_res; uniform float u_size;
+void main(){
+  gl_Position  = vec4((u_pos / u_res) * 2.0 - 1.0, 0.0, 1.0);
+  gl_PointSize = u_size;
+}`;
+const FOOD_FS = `#version 300 es
+precision highp float;
+uniform float u_amount;
+out vec4 outColor;
+void main(){
+  float d = length(gl_PointCoord - 0.5) * 2.0;
+  outColor = vec4(u_amount * pow(max(1.0 - d, 0.0), 1.8));
+}`;
+
+const agentProg = program(AGENT_VS, AGENT_FS, ["v_state"]);
+const blurProg  = program(QUAD_VS, BLUR_FS);
+const showProg  = program(QUAD_VS, SHOW_FS);
+const foodProg  = program(FOOD_VS, FOOD_FS);
+
+/* ── buffers, textures, framebuffers ────────────────────────────── */
+const emptyVAO = gl.createVertexArray();
+const tf = gl.createTransformFeedback();
+
+let W = 0, H = 0;
+let bufs = [null, null], vaos = [null, null], cur = 0;
+let texA, texB, fboA, fboB;
+let N = 0;
+
+/* A half-float trail keeps faint pheromone alive instead of quantising it to
+   nothing; 8-bit is the fallback for cards that can't render to float. */
+const FLOATABLE = !!(gl.getExtension("EXT_color_buffer_float") || gl.getExtension("EXT_color_buffer_half_float"));
+const TRAIL_IFMT = FLOATABLE ? gl.RGBA16F : gl.RGBA8;
+const TRAIL_TYPE = FLOATABLE ? gl.HALF_FLOAT : gl.UNSIGNED_BYTE;
+
+function makeTrail(w, h){
+  const t = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, t);
+  gl.texImage2D(gl.TEXTURE_2D, 0, TRAIL_IFMT, w, h, 0, gl.RGBA, TRAIL_TYPE, null);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+  const f = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, f);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
+  return [t, f];
+}
+
+function clearTrail(){
+  for (const f of [fboA, fboB]){
+    gl.bindFramebuffer(gl.FRAMEBUFFER, f);
+    gl.clearColor(0,0,0,1); gl.clear(gl.COLOR_BUFFER_BIT);
+  }
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+}
+
+function seedAgents(){
+  N = P.population;
+  const data = new Float32Array(N * 4);
+  const cx = W/2, cy = H/2;
+  const rad = Math.min(W, H) * 0.34;
+  const side = Math.ceil(Math.sqrt(N));
+  for (let i=0; i<N; i++){
+    let x, y, a;
+    if (seedMode === "Ring"){
+      const t = Math.random() * Math.PI * 2;
+      x = cx + Math.cos(t) * rad; y = cy + Math.sin(t) * rad;
+      a = t + Math.PI/2 + (Math.random()-0.5) * 0.4;
+    } else if (seedMode === "Point"){
+      const t = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * Math.min(W,H) * 0.04;
+      x = cx + Math.cos(t) * r; y = cy + Math.sin(t) * r;
+      a = Math.random() * Math.PI * 2;
+    } else if (seedMode === "Grid"){
+      x = ((i % side) + 0.5) / side * W;
+      y = (Math.floor(i / side) + 0.5) / side * H;
+      a = Math.floor(Math.random() * 4) * Math.PI / 2;
+    } else {
+      x = Math.random() * W; y = Math.random() * H;
+      a = Math.random() * Math.PI * 2;
+    }
+    data[i*4]   = x; data[i*4+1] = y;
+    data[i*4+2] = a; data[i*4+3] = Math.random() * 1000;
+  }
+  for (let i=0;i<2;i++){
+    if (bufs[i]) gl.deleteBuffer(bufs[i]);
+    if (vaos[i]) gl.deleteVertexArray(vaos[i]);
+    bufs[i] = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, bufs[i]);
+    gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_COPY);
+    vaos[i] = gl.createVertexArray();
+    gl.bindVertexArray(vaos[i]);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 4, gl.FLOAT, false, 0, 0);
+  }
+  gl.bindVertexArray(null);
+  gl.bindBuffer(gl.ARRAY_BUFFER, null);
+  cur = 0;
+  steps = 0;
+}
+
+function resize(){
+  const dpr = Math.min(window.devicePixelRatio || 1, 1.25);
+  let w = Math.max(2, Math.round(innerWidth  * dpr));
+  let h = Math.max(2, Math.round(innerHeight * dpr));
+  const cap = 1_900_000;                       // keep the fill rate sane
+  if (w * h > cap){ const s = Math.sqrt(cap / (w*h)); w = Math.round(w*s); h = Math.round(h*s); }
+  if (w === W && h === H) return;
+  W = w; H = h;
+  canvas.width = W; canvas.height = H;
+  if (texA){ gl.deleteTexture(texA); gl.deleteTexture(texB); gl.deleteFramebuffer(fboA); gl.deleteFramebuffer(fboB); }
+  [texA, fboA] = makeTrail(W, H);
+  [texB, fboB] = makeTrail(W, H);
+  clearTrail();
+  seedAgents();
+}
+
+/* ── the frame ──────────────────────────────────────────────────── */
+let running = true, steps = 0, frame = 0;
+let food = null, lastFood = null;
+
+function simulate(){
+  const rad = Math.PI / 180;
+
+  // 1 ── diffuse + evaporate: texA → texB
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fboB);
+  gl.viewport(0, 0, W, H);
+  gl.disable(gl.BLEND);
+  gl.useProgram(blurProg.p);
+  gl.bindVertexArray(emptyVAO);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texA);
+  gl.uniform1i(blurProg.u.u_trail, 0);
+  gl.uniform2f(blurProg.u.u_res, W, H);
+  gl.uniform1f(blurProg.u.u_diffuse, P.diffuse);
+  gl.uniform1f(blurProg.u.u_evaporate, P.evaporate);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+  // 2 ── advance + deposit: agents sense texA, deposit additively into texB
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.ONE, gl.ONE);
+  gl.useProgram(agentProg.p);
+  gl.uniform1i(agentProg.u.u_trail, 0);
+  gl.uniform2f(agentProg.u.u_res, W, H);
+  gl.uniform1f(agentProg.u.u_sensorAngle, P.sensorAngle * rad);
+  gl.uniform1f(agentProg.u.u_sensorDist, P.sensorDist);
+  gl.uniform1f(agentProg.u.u_turn, P.turn * rad);
+  gl.uniform1f(agentProg.u.u_speed, P.speed);
+  gl.uniform1f(agentProg.u.u_wander, P.wander);
+  // Normalise the drop so the slider means "mean trail level" no matter how many
+  // agents are alive or how slowly the medium fades.
+  gl.uniform1f(agentProg.u.u_deposit,
+    Math.max(2e-4, P.deposit * (W * H) / N * (1 - P.evaporate)));
+  gl.uniform1f(agentProg.u.u_frame, frame);
+
+  gl.bindVertexArray(vaos[cur]);
+  gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, tf);
+  gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 0, bufs[1 - cur]);
+  gl.beginTransformFeedback(gl.POINTS);
+  gl.drawArrays(gl.POINTS, 0, N);
+  gl.endTransformFeedback();
+  gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 0, null);
+  gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, null);
+  cur = 1 - cur;
+
+  // 3 ── food dropped by the pointer, same additive target
+  if (food){
+    gl.useProgram(foodProg.p);
+    gl.bindVertexArray(emptyVAO);
+    gl.uniform2f(foodProg.u.u_res, W, H);
+    gl.uniform1f(foodProg.u.u_size, Math.max(24, Math.min(W, H) * 0.055));
+    gl.uniform1f(foodProg.u.u_amount, Math.max(0.6, P.deposit * 6.0));
+    const from = lastFood || food;
+    const stepsN = Math.min(10, 1 + Math.round(Math.hypot(food.x - from.x, food.y - from.y) / 8));
+    for (let i=0; i<stepsN; i++){
+      const t = stepsN === 1 ? 1 : i / (stepsN - 1);
+      gl.uniform2f(foodProg.u.u_pos, from.x + (food.x - from.x) * t, from.y + (food.y - from.y) * t);
+      gl.drawArrays(gl.POINTS, 0, 1);
+    }
+    lastFood = { x: food.x, y: food.y };
+  }
+
+  // texB now holds the newest trail
+  [texA, texB] = [texB, texA];
+  [fboA, fboB] = [fboB, fboA];
+  steps++; frame++;
+}
+
+function present(){
+  // ease the palette so switching stains is a dissolve, not a cut
+  for (let i=0;i<5;i++) for (let c=0;c<3;c++) palCur[i][c] += (palTgt[i][c] - palCur[i][c]) * 0.12;
+  const flat = new Float32Array(15);
+  for (let i=0;i<5;i++) flat.set(palCur[i], i*3);
+
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.viewport(0, 0, W, H);
+  gl.disable(gl.BLEND);
+  gl.useProgram(showProg.p);
+  gl.bindVertexArray(emptyVAO);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texA);
+  gl.uniform1i(showProg.u.u_trail, 0);
+  gl.uniform2f(showProg.u.u_res, W, H);
+  gl.uniform1f(showProg.u.u_gamma, P.gamma);
+  gl.uniform1f(showProg.u.u_mean, P.deposit);
+  gl.uniform3fv(showProg.u.u_pal, flat);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+
+let fpsT = performance.now(), fpsN = 0;
+function loop(){
+  requestAnimationFrame(loop);
+  if (running) for (let i=0; i<P.steps; i++) simulate();
+  present();
+  fpsN++;
+  const now = performance.now();
+  if (now - fpsT > 500){
+    rFps.firstChild.nodeValue = (fpsN * 1000 / (now - fpsT)).toFixed(0);
+    rSteps.textContent = steps > 9999 ? (steps/1000).toFixed(1) + "k" : steps;
+    fpsT = now; fpsN = 0;
+  }
+}
+
+/* ── controls ───────────────────────────────────────────────────── */
+const $ = id => document.getElementById(id);
+const rFps = $("rFps"), rSteps = $("rSteps"), rAgents = $("rAgents");
+const fmtN = n => n >= 1e6 ? (n/1e6).toFixed(2).replace(/\.?0+$/,"") + "M" : Math.round(n/1000) + "k";
+
+function slider(host, key, label, min, max, step, fmt, onset){
+  const wrap = document.createElement("label");
+  wrap.className = "ctl";
+  wrap.innerHTML = `<span class="ctl-top"><span class="ctl-name">${label}</span><span class="ctl-val"></span></span>`;
+  const input = document.createElement("input");
+  input.type = "range"; input.min = min; input.max = max; input.step = step; input.value = P[key];
+  const val = wrap.querySelector(".ctl-val");
+  const sync = () => { val.textContent = fmt(P[key]); input.value = P[key]; };
+  input.addEventListener("input", () => {
+    P[key] = parseFloat(input.value);
+    val.textContent = fmt(P[key]);
+    if (onset) onset();
+  });
+  wrap.appendChild(input);
+  host.appendChild(wrap);
+  sync();
+  return sync;
+}
+
+const syncs = [];
+const behaviour = $("behaviour"), medium = $("medium"), render = $("render");
+behaviour.style.cssText = medium.style.cssText = render.style.cssText =
+  "display:flex;flex-direction:column;gap:11px;margin-top:2px";
+
+syncs.push(slider(behaviour, "sensorAngle", "Sensor angle", 3, 90, 1, v => v.toFixed(0) + "°"));
+syncs.push(slider(behaviour, "sensorDist", "Sensor reach", 1, 40, 0.5, v => v.toFixed(1) + " px"));
+syncs.push(slider(behaviour, "turn", "Turn rate", 1, 120, 1, v => v.toFixed(0) + "°"));
+syncs.push(slider(behaviour, "speed", "Step length", 0.1, 4, 0.05, v => v.toFixed(2) + " px"));
+syncs.push(slider(behaviour, "wander", "Wander", 0, 1.2, 0.01, v => v.toFixed(2) + " rad"));
+
+syncs.push(slider(medium, "deposit", "Trail density", 0.02, 0.6, 0.005, v => v.toFixed(3)));
+syncs.push(slider(medium, "evaporate", "Persistence", 0.85, 0.999, 0.001, v => v.toFixed(3)));
+syncs.push(slider(medium, "diffuse", "Diffusion", 0, 1, 0.01, v => v.toFixed(2)));
+
+slider(render, "population", "Population", 50000, 2000000, 50000, fmtN, () => {
+  clearTimeout(popTimer);
+  popTimer = setTimeout(() => { seedAgents(); rAgents.textContent = fmtN(N); }, 220);
+});
+slider(render, "steps", "Steps / frame", 1, 4, 1, v => v.toFixed(0) + "×");
+slider(render, "gamma", "Contrast", 0.4, 1.6, 0.02, v => v.toFixed(2));
+let popTimer = null;
+
+function chipGroup(host, names, isActive, onPick){
+  host.innerHTML = "";
+  names.forEach(name => {
+    const b = document.createElement("button");
+    b.className = "chip"; b.type = "button"; b.textContent = name;
+    b.setAttribute("aria-pressed", String(isActive(name)));
+    b.addEventListener("click", () => {
+      onPick(name);
+      [...host.children].forEach(c => c.setAttribute("aria-pressed", String(c === b)));
+    });
+    host.appendChild(b);
+  });
+}
+
+chipGroup($("seeds"), SEEDS, n => n === seedMode, n => { seedMode = n; clearTrail(); seedAgents(); });
+
+chipGroup($("presets"), Object.keys(PRESETS), n => n === presetName, n => {
+  presetName = n;
+  Object.assign(P, PRESETS[n]);
+  syncs.forEach(s => s());
+});
+
+const palHost = $("palettes");
+Object.entries(PALETTES).forEach(([name, stops]) => {
+  const b = document.createElement("button");
+  b.className = "sw"; b.type = "button"; b.title = name;
+  b.setAttribute("aria-label", "Stain: " + name);
+  b.setAttribute("aria-pressed", String(name === paletteName));
+  b.style.background = `linear-gradient(90deg, ${stops.join(", ")})`;
+  b.addEventListener("click", () => {
+    paletteName = name;
+    palTgt = stops.map(hex2rgb);
+    [...palHost.children].forEach(c => c.setAttribute("aria-pressed", String(c === b)));
+  });
+  palHost.appendChild(b);
+});
+
+const playBtn = $("playBtn"), rail = $("rail"), handle = $("handle");
+function setRunning(v){
+  running = v;
+  playBtn.textContent = v ? "Pause" : "Resume";
+  playBtn.classList.toggle("primary", v);
+}
+playBtn.addEventListener("click", () => setRunning(!running));
+$("resetBtn").addEventListener("click", () => { clearTrail(); seedAgents(); });
+
+function setRail(open){
+  rail.dataset.open = String(open);
+  handle.setAttribute("aria-label", open ? "Hide controls" : "Show controls");
+}
+handle.addEventListener("click", () => setRail(rail.dataset.open !== "true"));
+
+addEventListener("keydown", e => {
+  if (e.target.matches("input")) return;
+  const k = e.key.toLowerCase();
+  if (k === " ")      { e.preventDefault(); setRunning(!running); }
+  else if (k === "r") { clearTrail(); seedAgents(); }
+  else if (k === "h") { const off = document.body.dataset.chrome === "off";
+                        document.body.dataset.chrome = off ? "on" : "off"; setRail(off); }
+});
+
+/* pointer feeds the culture */
+const toField = e => {
+  const r = canvas.getBoundingClientRect();
+  return { x: (e.clientX - r.left) / r.width * W, y: (1 - (e.clientY - r.top) / r.height) * H };
+};
+canvas.addEventListener("pointerdown", e => { canvas.setPointerCapture(e.pointerId); lastFood = null; food = toField(e); });
+canvas.addEventListener("pointermove", e => { if (food) food = toField(e); });
+const dropFood = () => { food = null; lastFood = null; };
+canvas.addEventListener("pointerup", dropFood);
+canvas.addEventListener("pointercancel", dropFood);
+
+let resizeTimer = null;
+addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(resize, 180); });
+
+/* ── go ─────────────────────────────────────────────────────────── */
+resize();
+rAgents.textContent = fmtN(N);
+if (matchMedia("(prefers-reduced-motion: reduce)").matches) setRunning(false);
+if (innerWidth < 820) setRail(false);
+loop();
+
+})();
+</script>
+
+</body>
+</html>
